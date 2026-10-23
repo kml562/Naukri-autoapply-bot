@@ -267,8 +267,13 @@ def create_firefox_driver():
         options.binary_location = firefox_bin
         logger.info("Using Firefox binary: %s", firefox_bin)
 
-    if WEBDRIVER_MANAGER_AVAILABLE:
-        logger.info("Using webdriver-manager to auto-download GeckoDriver...")
+    # Use cached geckodriver if available, otherwise download
+    cached = os.path.expanduser("~/.wdm/drivers/geckodriver/linux64/v0.37.1/geckodriver")
+    if os.path.exists(cached):
+        logger.info("Using cached geckodriver: %s", cached)
+        service = FirefoxService(cached)
+    elif WEBDRIVER_MANAGER_AVAILABLE:
+        logger.info("Downloading geckodriver via webdriver-manager...")
         service = FirefoxService(GeckoDriverManager().install())
     else:
         service = FirefoxService()
