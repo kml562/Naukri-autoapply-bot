@@ -50,6 +50,9 @@ load_dotenv()
 
 NAUKRI_EMAIL = os.getenv('NAUKRI_EMAIL', '')
 NAUKRI_PASSWORD = os.getenv('NAUKRI_PASSWORD', '')
+NAUKRI_LOGIN_METHOD = os.getenv('NAUKRI_LOGIN_METHOD', 'password')  # 'password' | 'google'
+GOOGLE_EMAIL = os.getenv('GOOGLE_EMAIL', '')
+GOOGLE_PASSWORD = os.getenv('GOOGLE_PASSWORD', '')
 MAX_SELECT = 5
 ANSWERS_CSV = "application_answers.csv"
 DASHBOARD_URL = os.getenv('DASHBOARD_URL', 'http://localhost:8080')
@@ -215,12 +218,23 @@ def ask_via_dashboard(question_text, field_type="text", options=None, job_url=""
 # ============================================================
 
 def create_firefox_driver():
-    """Create and return a Firefox WebDriver instance."""
+    """Create and return a Firefox WebDriver instance.
+
+    If FIREFOX_PROFILE_PATH is set, Firefox loads that profile — useful when
+    using Google login so the session is already authenticated with Google,
+    avoiding bot-detection blocks.
+    """
     options = webdriver.FirefoxOptions()
     options.add_argument("--start-maximized")
     if HEADLESS:
         options.add_argument("--headless")
         logger.info("Running Firefox in headless mode")
+
+    profile_path = os.getenv("FIREFOX_PROFILE_PATH", "")
+    if profile_path and os.path.isdir(profile_path):
+        options.add_argument("-profile")
+        options.add_argument(profile_path)
+        logger.info("Using Firefox profile: %s", profile_path)
 
     if WEBDRIVER_MANAGER_AVAILABLE:
         logger.info("Using webdriver-manager to auto-download GeckoDriver...")
@@ -234,22 +248,113 @@ def create_firefox_driver():
 
 
 def login_naukri(driver):
-    """Log in to Naukri.com."""
-    logger.info("Logging in to Naukri.com...")
+    """Log in to Naukri.com using the configured method (password or Google)."""
+    if NAUKRI_LOGIN_METHOD == "google":
+        _login_naukri_google(driver)
+    else:
+        _login_naukri_password(driver)
+
+
+def _login_naukri_password(driver):
+    """Standard email+password login on Naukri."""
+    logger.info("Logging in to Naukri.com with email/password…")
     driver.get('https://login.naukri.com/')
     time.sleep(3)
 
     WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.ID, 'usernameField'))
     )
-
     driver.find_element(By.ID, 'usernameField').send_keys(NAUKRI_EMAIL)
     passwd = driver.find_element(By.ID, 'passwordField')
     passwd.send_keys(NAUKRI_PASSWORD)
     passwd.send_keys(Keys.ENTER)
-
     time.sleep(8)
-    logger.info("Login completed.")
+    logger.info("Login completed (password).")
+
+
+def _login_naukri_google(driver):
+    """
+    Log in to Naukri.com via 'Continue with Google'.
+    Naukri redirects to accounts.google.com; we fill in GOOGLE_EMAIL + GOOGLE_PASSWORD.
+
+    NOTE: Google detects browser automation. If it blocks the sign-in,
+    pre-load a Firefox profile that's already signed into Google and point
+    FIREFOX_PROFILE_PATH at it.
+    """
+    logger.info("Logging in to Naukri.com with Google OAuth…")
+    driver.get('https://login.naukri.com/')
+    time.sleep(3)
+
+    # Click the "Continue with Google" button
+    try:
+        google_btn = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH,
+                "//button[contains(@class,'googleLogin')] | "
+                "//a[contains(@class,'googleLogin')] | "
+                "//*[contains(text(),'Continue with Google') or contains(text(),'Sign in with Google')]"
+            ))
+        )
+        driver.execute_script("arguments[0].click();", google_btn)
+        logger.info("  Clicked 'Continue with Google'")
+    except TimeoutException:
+        logger.error("  'Continue with Google' button not found — falling back to password login")
+        _login_naukri_password(driver)
+        return
+
+    time.sleep(3)
+
+    # Google sign-in: email step
+    try:
+        email_field = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR,
+                "input[type='email'], input[name='identifier']"))
+        )
+        email_field.clear()
+        email_field.send_keys(GOOGLE_EMAIL)
+        email_field.send_keys(Keys.ENTER)
+        logger.info("  Google email entered")
+        time.sleep(3)
+    except TimeoutException:
+        # Google may have detected automation and shown an error page
+        logger.warning("  Google email field not found — may be blocked by Google bot detection")
+        _handle_google_block(driver)
+        return
+
+    # Google sign-in: password step
+    try:
+        pwd_field = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR,
+                "input[type='password'], input[name='password'], input[name='Passwd']"))
+        )
+        pwd_field.clear()
+        pwd_field.send_keys(GOOGLE_PASSWORD)
+        pwd_field.send_keys(Keys.ENTER)
+        logger.info("  Google password entered")
+        time.sleep(10)  # wait for redirect back to Naukri
+    except TimeoutException:
+        logger.warning("  Google password field not found")
+        _handle_google_block(driver)
+        return
+
+    # Check if we're back on Naukri
+    if "naukri.com" in driver.current_url:
+        logger.info("Login completed (Google).")
+    else:
+        logger.warning("  Not back on Naukri — may need manual intervention (Google 2FA?)")
+        logger.info("  Current URL: %s", driver.current_url)
+        time.sleep(30)  # give user time to handle 2FA
+
+
+def _handle_google_block(driver):
+    """Handle the case where Google detects automation."""
+    logger.warning(
+        "  Google has detected automation. Options to fix:\n"
+        "  1. Use a Firefox profile already signed into Google:\n"
+        "     Set FIREFOX_PROFILE_PATH=/path/to/profile in .env\n"
+        "  2. Or switch back to email+password login in your Dashboard Profile."
+    )
+    logger.info("  Falling back to password login…")
+    _login_naukri_password(driver)
 
 
 # ============================================================
@@ -812,18 +917,33 @@ def navigate_to_tab(driver, tab_id):
 
 def load_credentials_from_dashboard():
     """
-    Try to load Naukri credentials + job prefs from the dashboard (MongoDB).
-    Falls back to .env values if the server is unreachable or profile is empty.
-    Returns (email, password) — also updates module-level config globals.
+    Load Naukri credentials + login method from the dashboard.
+    Falls back to .env values if server is unreachable.
     """
-    global NAUKRI_EMAIL, NAUKRI_PASSWORD
+    global NAUKRI_EMAIL, NAUKRI_PASSWORD, NAUKRI_LOGIN_METHOD, GOOGLE_EMAIL, GOOGLE_PASSWORD
     data = _api("GET", "/api/profile/bot-config")
-    if data and data.get("email") and data.get("password"):
-        NAUKRI_EMAIL    = data["email"]
-        NAUKRI_PASSWORD = data["password"]
-        logger.info("Credentials loaded from dashboard profile.")
+    if not data:
+        logger.info("Dashboard unreachable — using .env credentials.")
+        return
+
+    method = data.get("login_method", "password")
+    NAUKRI_LOGIN_METHOD = method
+
+    if method == "google":
+        ge = data.get("google_email", "")
+        gp = data.get("google_password", "")
+        if ge and gp:
+            GOOGLE_EMAIL    = ge
+            GOOGLE_PASSWORD = gp
+            NAUKRI_EMAIL    = ge
+            logger.info("Google login credentials loaded from dashboard.")
+        else:
+            logger.warning("Google login selected but no Google credentials in profile.")
     else:
-        logger.info("Dashboard profile empty or unreachable — using .env credentials.")
+        if data.get("email") and data.get("password"):
+            NAUKRI_EMAIL    = data["email"]
+            NAUKRI_PASSWORD = data["password"]
+            logger.info("Password credentials loaded from dashboard.")
 
 
 def main():
@@ -835,9 +955,14 @@ def main():
     # Load credentials from dashboard profile (falls back to .env)
     load_credentials_from_dashboard()
 
-    if not NAUKRI_EMAIL or not NAUKRI_PASSWORD:
-        logger.error("No credentials found. Set them in the dashboard Profile page or in .env")
-        return
+    if NAUKRI_LOGIN_METHOD == "google":
+        if not GOOGLE_EMAIL or not GOOGLE_PASSWORD:
+            logger.error("Google login selected but GOOGLE_EMAIL/GOOGLE_PASSWORD not set. Configure in Dashboard Profile.")
+            return
+    else:
+        if not NAUKRI_EMAIL or not NAUKRI_PASSWORD:
+            logger.error("No credentials found. Set them in the dashboard Profile page or in .env")
+            return
 
     selected_tabs = select_tabs()
     logger.info(f"Applying to tabs: {', '.join(t['label'] for t in selected_tabs)}")
