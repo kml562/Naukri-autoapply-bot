@@ -278,11 +278,44 @@ def _login_naukri_password(driver):
     """Standard email+password login on Naukri."""
     logger.info("Logging in to Naukri.com with email/password…")
     driver.get('https://login.naukri.com/')
-    time.sleep(3)
+    time.sleep(5)
 
-    WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.ID, 'usernameField'))
-    )
+    # Save screenshot to help debug login page issues
+    try:
+        screenshot_path = os.path.join(os.path.dirname(__file__), "login_debug.png")
+        driver.save_screenshot(screenshot_path)
+        logger.info("Login page screenshot saved: %s", screenshot_path)
+        logger.info("Current URL: %s", driver.current_url)
+        logger.info("Page title: %s", driver.title)
+    except Exception:
+        pass
+
+    try:
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.ID, 'usernameField'))
+        )
+    except TimeoutException:
+        # Try alternative selectors Naukri sometimes uses
+        logger.warning("usernameField not found, trying alternative selectors...")
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR,
+                    "input[placeholder*='Email'], input[type='email'], input[name='username']"))
+            )
+            email_field = driver.find_element(By.CSS_SELECTOR,
+                "input[placeholder*='Email'], input[type='email'], input[name='username']")
+            email_field.send_keys(NAUKRI_EMAIL)
+            pwd_field = driver.find_element(By.CSS_SELECTOR,
+                "input[type='password'], input[name='password']")
+            pwd_field.send_keys(NAUKRI_PASSWORD)
+            pwd_field.send_keys(Keys.ENTER)
+            time.sleep(8)
+            logger.info("Login completed via alternative selectors.")
+            return
+        except Exception as e2:
+            logger.error("Alternative login also failed: %s", e2)
+            raise
+
     driver.find_element(By.ID, 'usernameField').send_keys(NAUKRI_EMAIL)
     passwd = driver.find_element(By.ID, 'passwordField')
     passwd.send_keys(NAUKRI_PASSWORD)
