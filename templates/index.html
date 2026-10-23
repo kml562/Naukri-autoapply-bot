@@ -340,6 +340,43 @@
     /* ── Divider ─────────────────────────────────────────────── */
     hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 
+    /* ── Bot control ─────────────────────────────────────────── */
+    .bot-status-row { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+    .bot-indicator {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--muted); flex-shrink: 0;
+      transition: background .3s;
+    }
+    .bot-indicator.running { background: var(--green); animation: blink 1.5s infinite; }
+    .bot-indicator.stopped { background: var(--red); animation: none; }
+    .bot-status-text { font-size: .9rem; font-weight: 600; }
+    .tab-checks { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+    .tab-check {
+      display: flex; align-items: center; gap: 7px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 7px; padding: 8px 14px; cursor: pointer;
+      transition: border-color .15s;
+    }
+    .tab-check:hover { border-color: var(--accent); }
+    .tab-check input { cursor: pointer; }
+    .log-box {
+      background: #080b14;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: .78rem;
+      color: #a0aec0;
+      height: 300px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-box .log-line { margin-bottom: 2px; }
+    .log-box .log-line.ok  { color: var(--green); }
+    .log-box .log-line.err { color: var(--red); }
+    .log-box .log-line.warn { color: var(--yellow); }
+
     /* ── Toast ───────────────────────────────────────────────── */
     #toast {
       position: fixed;
@@ -374,6 +411,10 @@
       <div class="nav-label">Overview</div>
       <div class="nav-item active" onclick="goto('overview')">
         <span class="icon">📊</span> Dashboard
+      </div>
+      <div class="nav-item" onclick="goto('bot')">
+        <span class="icon">🤖</span> Run Bot
+        <span class="nav-badge" id="sb-bot-running" style="display:none">ON</span>
       </div>
       <div class="nav-item" onclick="goto('pending')">
         <span class="icon">⏳</span> Pending Q's
@@ -446,6 +487,30 @@
         </table>
       </div>
     </div>
+  </div>
+
+  <!-- ── Bot Control ───────────────────────────────────────── -->
+  <div class="page" id="page-bot">
+    <div class="card">
+      <div class="bot-status-row">
+        <div class="bot-indicator" id="bot-dot"></div>
+        <span class="bot-status-text" id="bot-status-text">Checking…</span>
+        <button class="btn btn-primary" id="btn-start" onclick="startBot()" style="margin-left:auto">▶ Start Bot</button>
+        <button class="btn btn-danger"  id="btn-stop"  onclick="stopBot()"  style="display:none">⏹ Stop Bot</button>
+      </div>
+
+      <div class="section-h">Select Tabs to Apply</div>
+      <div class="tab-checks">
+        <label class="tab-check"><input type="checkbox" name="tab" value="1"> Applies</label>
+        <label class="tab-check"><input type="checkbox" name="tab" value="2"> Profile</label>
+        <label class="tab-check"><input type="checkbox" name="tab" value="3" checked> Top Candidate</label>
+        <label class="tab-check"><input type="checkbox" name="tab" value="4"> Preferences</label>
+        <label class="tab-check"><input type="checkbox" name="tab" value="5"> You might like</label>
+      </div>
+    </div>
+
+    <div class="section-h">Live Logs</div>
+    <div class="log-box" id="log-box">Waiting for bot to start…</div>
   </div>
 
   <!-- ── Pending Questions ──────────────────────────────────── -->
@@ -630,6 +695,7 @@
 // ── Router ──────────────────────────────────────────────────────────────────
 const PAGE_TITLES = {
   overview: 'Dashboard',
+  bot:      'Run Bot',
   pending:  'Pending Questions',
   history:  'History',
   profile:  'Profile & Settings',
@@ -962,9 +1028,69 @@ async function delQA(btn, question) {
   toast('Deleted', 'ok');
 }
 
+// ── Bot control ──────────────────────────────────────────────────────────────
+let botRunning = false;
+
+async function refreshBot() {
+  try {
+    const d = await api('GET', '/api/bot/status');
+    botRunning = d.running;
+
+    // Sidebar badge
+    const badge = document.getElementById('sb-bot-running');
+    badge.style.display = d.running ? '' : 'none';
+
+    // Status row
+    const dot  = document.getElementById('bot-dot');
+    const txt  = document.getElementById('bot-status-text');
+    const btnS = document.getElementById('btn-start');
+    const btnT = document.getElementById('btn-stop');
+    if (dot && txt) {
+      dot.className = 'bot-indicator ' + (d.running ? 'running' : 'stopped');
+      txt.textContent = d.running ? '🟢 Bot is running…' : '⚫ Bot is stopped';
+      if (btnS) btnS.style.display = d.running ? 'none' : '';
+      if (btnT) btnT.style.display = d.running ? '' : 'none';
+    }
+
+    // Logs
+    const logBox = document.getElementById('log-box');
+    if (logBox && d.logs && d.logs.length) {
+      const atBottom = logBox.scrollHeight - logBox.scrollTop <= logBox.clientHeight + 40;
+      logBox.innerHTML = d.logs.map(l => {
+        const cls = l.includes('ERROR')||l.includes('✗') ? 'err'
+                  : l.includes('WARN')||l.includes('⚠') ? 'warn'
+                  : l.includes('✓')||l.includes('Applied') ? 'ok' : '';
+        return `<div class="log-line ${cls}">${esc(l)}</div>`;
+      }).join('');
+      if (atBottom) logBox.scrollTop = logBox.scrollHeight;
+    }
+  } catch(e) {}
+}
+
+async function startBot() {
+  const checked = [...document.querySelectorAll('input[name=tab]:checked')].map(c=>c.value);
+  if (!checked.length) { toast('Select at least one tab', 'err'); return; }
+  const tabs = checked.join(',');
+  const d = await api('POST', '/api/bot/start', {tabs});
+  if (d.ok) {
+    toast('Bot started!', 'ok');
+    refreshBot();
+  } else {
+    toast(d.error || 'Could not start bot', 'err');
+  }
+}
+
+async function stopBot() {
+  const d = await api('POST', '/api/bot/stop');
+  if (d.ok) { toast('Bot stopped', 'ok'); refreshBot(); }
+  else toast(d.error || 'Could not stop bot', 'err');
+}
+
 // ── Bootstrap ────────────────────────────────────────────────────────────────
 refresh();
+refreshBot();
 setInterval(refresh, 4000);
+setInterval(refreshBot, 3000);
 </script>
 </body>
 </html>

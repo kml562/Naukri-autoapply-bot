@@ -7,10 +7,14 @@ Provides:
 """
 
 import os
+import sys
 import uuid
 import difflib
 import logging
+import subprocess
+import threading
 import boto3
+from collections import deque
 from datetime import datetime
 from flask import Flask, render_template, jsonify, request, g
 from flask_cors import CORS
@@ -384,6 +388,80 @@ def save_context():
 @app.route("/api/context/<path:key>", methods=["DELETE"])
 def delete_context(key):
     context_col.delete_one({"key": key})
+    return jsonify({"ok": True})
+
+
+# ── Bot process management ────────────────────────────────────────────────────
+
+_bot_process  = None          # subprocess.Popen
+_bot_logs     = deque(maxlen=200)   # last 200 log lines
+_bot_lock     = threading.Lock()
+
+def _stream_bot_logs(proc):
+    """Read bot stdout/stderr in background and store in _bot_logs."""
+    for line in proc.stdout:
+        line = line.rstrip()
+        _bot_logs.append(line)
+        log.info("[BOT] %s", line)
+    proc.wait()
+    _bot_logs.append(f"--- Bot exited with code {proc.returncode} ---")
+    log.info("Bot process exited with code %s", proc.returncode)
+
+
+@app.route("/api/bot/status")
+def bot_status():
+    with _bot_lock:
+        running = _bot_process is not None and _bot_process.poll() is None
+    return jsonify({
+        "running": running,
+        "logs": list(_bot_logs),
+    })
+
+
+@app.route("/api/bot/start", methods=["POST"])
+def bot_start():
+    global _bot_process
+    data = request.json or {}
+    tabs = data.get("tabs", "3")   # default: Top Candidate
+
+    with _bot_lock:
+        if _bot_process and _bot_process.poll() is None:
+            return jsonify({"ok": False, "error": "Bot is already running"}), 400
+
+        _bot_logs.clear()
+        _bot_logs.append("Starting bot...")
+
+        bot_script = os.path.join(os.path.dirname(__file__), "Naukri-Recommended.py")
+        python_bin  = sys.executable
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+
+        log.info("Starting bot: %s --tabs %s", bot_script, tabs)
+        _bot_process = subprocess.Popen(
+            [python_bin, bot_script, "--tabs", str(tabs)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=env,
+            cwd=os.path.dirname(__file__),
+        )
+        t = threading.Thread(target=_stream_bot_logs, args=(_bot_process,), daemon=True)
+        t.start()
+
+    log.info("Bot started  pid=%s  tabs=%s", _bot_process.pid, tabs)
+    return jsonify({"ok": True, "pid": _bot_process.pid})
+
+
+@app.route("/api/bot/stop", methods=["POST"])
+def bot_stop():
+    global _bot_process
+    with _bot_lock:
+        if _bot_process is None or _bot_process.poll() is not None:
+            return jsonify({"ok": False, "error": "Bot is not running"}), 400
+        _bot_process.terminate()
+        _bot_logs.append("--- Bot stopped by user ---")
+        log.info("Bot terminated by user")
     return jsonify({"ok": True})
 
 

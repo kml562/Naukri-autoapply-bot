@@ -20,6 +20,7 @@ Page: https://www.naukri.com/mnjuser/recommendedjobs
 """
 
 import os
+import sys
 import time
 import csv
 import difflib
@@ -52,6 +53,7 @@ NAUKRI_PASSWORD = os.getenv('NAUKRI_PASSWORD', '')
 MAX_SELECT = 5
 ANSWERS_CSV = "application_answers.csv"
 DASHBOARD_URL = os.getenv('DASHBOARD_URL', 'http://localhost:8080')
+HEADLESS = os.getenv('HEADLESS', 'false').lower() == 'true'
 
 TABS = [
     {"num": 1, "id": "apply",        "label": "Applies"},
@@ -216,8 +218,9 @@ def create_firefox_driver():
     """Create and return a Firefox WebDriver instance."""
     options = webdriver.FirefoxOptions()
     options.add_argument("--start-maximized")
-    # Uncomment the line below to run in headless mode (no visible browser)
-    # options.add_argument("--headless")
+    if HEADLESS:
+        options.add_argument("--headless")
+        logger.info("Running Firefox in headless mode")
 
     if WEBDRIVER_MANAGER_AVAILABLE:
         logger.info("Using webdriver-manager to auto-download GeckoDriver...")
@@ -752,20 +755,23 @@ def find_save_button(driver):
 
 
 # ============================================================
-# Tab Selection (terminal prompt)
+# Tab Selection — from CLI args (passed by server) or default
 # ============================================================
 
 def select_tabs():
-    """Prompt the user to pick which job tabs to apply to. Returns list of tab dicts."""
-    print("\n" + "=" * 50)
-    print("Select job tabs to apply to:")
-    for t in TABS:
-        print(f"  {t['num']}. {t['label']}")
-    print("=" * 50)
-    raw = input("Enter numbers (e.g. 1,3,5) or press Enter for Top Candidate: ").strip()
+    """
+    Get selected tabs from --tabs CLI argument (e.g. --tabs 1,3,5).
+    Falls back to Top Candidate (tab 3) if not provided.
+    """
+    raw = ""
+    for i, arg in enumerate(sys.argv):
+        if arg == "--tabs" and i + 1 < len(sys.argv):
+            raw = sys.argv[i + 1]
+            break
 
     if not raw:
-        return [TABS[2]]  # default: Top Candidate
+        logger.info("No --tabs arg — defaulting to Top Candidate")
+        return [TABS[2]]
 
     selected = []
     for part in raw.split(','):
@@ -776,7 +782,7 @@ def select_tabs():
                 selected.append(TABS[idx])
 
     if not selected:
-        print("Invalid input — defaulting to Top Candidate.")
+        logger.info("Invalid --tabs value — defaulting to Top Candidate")
         return [TABS[2]]
 
     return selected
