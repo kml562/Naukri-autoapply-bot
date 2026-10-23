@@ -1,0 +1,14 @@
+[Unit]
+Description=Virtual Display + VNC for Naukri Bot
+After=network.target
+
+[Service]
+User=ubuntu
+ExecStartPre=/bin/bash -c 'pkill Xvfb || true; pkill x11vnc || true; pkill websockify || true; sleep 1'
+ExecStart=/bin/bash -c 'Xvfb :99 -screen 0 1280x800x24 & sleep 2 && x11vnc -display :99 -nopw -listen localhost -xkb -forever & sleep 1 && websockify --web /usr/share/novnc/ 6080 localhost:5900'
+Restart=always
+RestartSec=5
+Environment=DISPLAY=:99
+
+[Install]
+WantedBy=multi-user.target

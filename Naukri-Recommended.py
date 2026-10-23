@@ -230,9 +230,16 @@ def create_firefox_driver():
     """
     options = webdriver.FirefoxOptions()
     options.add_argument("--start-maximized")
-    if HEADLESS:
+
+    # Use headless only if no DISPLAY is set and HEADLESS=true
+    display = os.getenv("DISPLAY", "")
+    if HEADLESS and not display:
         options.add_argument("--headless")
         logger.info("Running Firefox in headless mode")
+    elif display:
+        logger.info("Running Firefox on virtual display %s", display)
+    else:
+        logger.info("Running Firefox in visible mode")
 
     profile_path = os.getenv("FIREFOX_PROFILE_PATH", "")
     if profile_path and os.path.isdir(profile_path):
