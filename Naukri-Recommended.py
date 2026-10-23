@@ -230,6 +230,8 @@ def create_firefox_driver():
     """
     options = webdriver.FirefoxOptions()
     options.add_argument("--start-maximized")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
 
     # Use headless only if no DISPLAY is set and HEADLESS=true
     display = os.getenv("DISPLAY", "")
@@ -240,6 +242,9 @@ def create_firefox_driver():
         logger.info("Running Firefox on virtual display %s", display)
     else:
         logger.info("Running Firefox in visible mode")
+
+    # Allow Firefox to run without user namespace sandboxing (needed on EC2)
+    options.set_preference("security.sandbox.content.level", 0)
 
     profile_path = os.getenv("FIREFOX_PROFILE_PATH", "")
     if profile_path and os.path.isdir(profile_path):
