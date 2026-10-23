@@ -240,6 +240,21 @@ def create_firefox_driver():
         options.add_argument(profile_path)
         logger.info("Using Firefox profile: %s", profile_path)
 
+    # On Ubuntu, Firefox snap is not auto-detected — set binary explicitly
+    firefox_bin = os.getenv("FIREFOX_BINARY", "")
+    if not firefox_bin:
+        for candidate in [
+            "/snap/bin/firefox",
+            "/usr/bin/firefox",
+            "/usr/local/bin/firefox",
+        ]:
+            if os.path.exists(candidate):
+                firefox_bin = candidate
+                break
+    if firefox_bin:
+        options.binary_location = firefox_bin
+        logger.info("Using Firefox binary: %s", firefox_bin)
+
     if WEBDRIVER_MANAGER_AVAILABLE:
         logger.info("Using webdriver-manager to auto-download GeckoDriver...")
         service = FirefoxService(GeckoDriverManager().install())
