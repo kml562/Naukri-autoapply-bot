@@ -1,0 +1,970 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Naukri Bot</title>
+  <style>
+    /* ── Design tokens ────────────────────────────────────────── */
+    :root {
+      --bg:        #0b0e1a;
+      --surface:   #141828;
+      --surface2:  #1c2038;
+      --surface3:  #252a45;
+      --border:    #2b3058;
+      --accent:    #5b6ef5;
+      --accent-h:  #7080ff;
+      --cyan:      #22d3ee;
+      --green:     #22c55e;
+      --yellow:    #f59e0b;
+      --red:       #ef4444;
+      --text:      #e4e8f7;
+      --muted:     #8891b8;
+      --radius:    10px;
+      --sidebar-w: 220px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font-size: 14px;
+      display: flex;
+    }
+
+    /* ── Sidebar ──────────────────────────────────────────────── */
+    .sidebar {
+      width: var(--sidebar-w);
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      position: fixed;
+      top: 0; left: 0;
+      height: 100vh;
+      z-index: 100;
+    }
+    .sidebar-logo {
+      padding: 20px 18px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-logo h1 {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: .3px;
+    }
+    .sidebar-logo span { color: var(--accent); }
+    .sidebar-nav { flex: 1; padding: 10px 8px; overflow-y: auto; }
+    .nav-section { margin-bottom: 4px; }
+    .nav-label {
+      font-size: .67rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
+      padding: 10px 10px 4px;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 9px 10px;
+      border-radius: 7px;
+      cursor: pointer;
+      color: var(--muted);
+      font-size: .88rem;
+      transition: background .12s, color .12s;
+      position: relative;
+    }
+    .nav-item:hover { background: var(--surface2); color: var(--text); }
+    .nav-item.active { background: var(--surface3); color: var(--text); font-weight: 600; }
+    .nav-item .icon { font-size: 1rem; width: 18px; text-align: center; }
+    .nav-badge {
+      margin-left: auto;
+      background: var(--red);
+      color: #fff;
+      font-size: .68rem;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 20px;
+      min-width: 18px;
+      text-align: center;
+    }
+    .sidebar-footer {
+      padding: 14px 16px;
+      border-top: 1px solid var(--border);
+      font-size: .75rem;
+      color: var(--muted);
+    }
+    .live-dot {
+      display: inline-block;
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      margin-right: 5px;
+      animation: blink 2s infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* ── Main content ─────────────────────────────────────────── */
+    .main {
+      margin-left: var(--sidebar-w);
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .topbar-title { font-size: 1rem; font-weight: 600; }
+    .topbar-meta  { font-size: .78rem; color: var(--muted); }
+
+    .page { display: none; padding: 28px 28px 48px; }
+    .page.active { display: block; }
+
+    /* ── Stat cards ───────────────────────────────────────────── */
+    .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 28px; }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 18px;
+    }
+    .stat-card .slabel { font-size: .68rem; text-transform: uppercase; letter-spacing: .9px; color: var(--muted); margin-bottom: 6px; }
+    .stat-card .sval   { font-size: 2.1rem; font-weight: 700; }
+    .stat-card.c-green .sval { color: var(--green); }
+    .stat-card.c-yellow .sval { color: var(--yellow); }
+    .stat-card.c-red .sval   { color: var(--red); }
+    .stat-card.c-cyan .sval  { color: var(--cyan); }
+    .stat-card.c-accent .sval { color: var(--accent); }
+
+    /* ── Section heading ─────────────────────────────────────── */
+    .section-h {
+      font-size: .78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .9px;
+      color: var(--muted);
+      margin-bottom: 14px;
+    }
+
+    /* ── Card / panel ─────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 22px;
+      margin-bottom: 18px;
+    }
+    .card-title { font-size: .95rem; font-weight: 600; margin-bottom: 16px; }
+
+    /* ── Form controls ────────────────────────────────────────── */
+    .field-group { display: flex; flex-direction: column; gap: 5px; margin-bottom: 16px; }
+    .field-group label { font-size: .8rem; color: var(--muted); }
+    input[type=text], input[type=email], input[type=password],
+    input[type=number], textarea, select {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 9px 12px;
+      color: var(--text);
+      font-size: .9rem;
+      width: 100%;
+      transition: border-color .15s;
+    }
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    textarea { resize: vertical; min-height: 80px; font-family: inherit; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+    @media(max-width:720px){.form-row,.form-row-3{grid-template-columns:1fr}}
+
+    /* ── Buttons ──────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 20px;
+      border-radius: 7px;
+      border: none;
+      font-size: .88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: filter .15s, opacity .15s;
+    }
+    .btn:disabled { opacity: .45; cursor: default; }
+    .btn-primary   { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled)  { filter: brightness(1.15); }
+    .btn-ghost     { background: var(--surface3); color: var(--text); }
+    .btn-ghost:hover:not(:disabled)    { background: var(--border); }
+    .btn-danger    { background: #450a0a; color: var(--red); border: 1px solid #7f1d1d; }
+    .btn-danger:hover:not(:disabled)   { background: #5c1111; }
+    .btn-sm { padding: 5px 12px; font-size: .8rem; }
+
+    /* ── Alerts ───────────────────────────────────────────────── */
+    .alert {
+      padding: 10px 16px;
+      border-radius: 7px;
+      font-size: .85rem;
+      margin-bottom: 14px;
+      display: none;
+    }
+    .alert.show { display: block; }
+    .alert-warn  { background: #2a1a0e; border: 1px solid #78350f; color: #fbbf24; }
+    .alert-ok    { background: #0a2e14; border: 1px solid #14532d; color: var(--green); }
+    .alert-err   { background: #2e0a0a; border: 1px solid #7f1d1d; color: var(--red); }
+    .alert-info  { background: #0e1a38; border: 1px solid #1e3a5f; color: #93c5fd; }
+
+    /* ── Pending question cards ───────────────────────────────── */
+    .qcard {
+      background: var(--surface);
+      border: 1px solid #4a3200;
+      border-left: 4px solid var(--yellow);
+      border-radius: var(--radius);
+      padding: 18px;
+      margin-bottom: 14px;
+    }
+    .qcard-q { font-size: .95rem; margin-bottom: 8px; }
+    .qcard-meta { font-size: .73rem; color: var(--muted); margin-bottom: 12px; }
+    .qcard-options { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .opt-btn {
+      padding: 6px 14px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+      cursor: pointer;
+      font-size: .82rem;
+      transition: all .12s;
+    }
+    .opt-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .opt-btn.sel   { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .qcard-row { display: flex; gap: 8px; align-items: center; }
+    .qcard-row input { flex: 1; }
+    .save-kb { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: .78rem; color: var(--muted); cursor: pointer; }
+    .save-kb input { width: auto; }
+    .answered-pill {
+      display: inline-block;
+      background: #0a2e14;
+      border: 1px solid #14532d;
+      color: var(--green);
+      font-size: .75rem;
+      padding: 3px 12px;
+      border-radius: 20px;
+    }
+
+    /* ── Table ────────────────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    th {
+      text-align: left; padding: 9px 14px;
+      font-size: .7rem; text-transform: uppercase; letter-spacing: .7px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    tr:last-child td { border: none; }
+    .badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 20px;
+      font-size: .72rem;
+      font-weight: 600;
+    }
+    .badge-applied { background: #0a2e14; color: var(--green); }
+    .badge-skipped { background: #2a1a04; color: var(--yellow); }
+    .badge-failed  { background: #2e0a0a; color: var(--red); }
+    .tlink { color: var(--cyan); text-decoration: none; font-size: .8rem; }
+    .tlink:hover { text-decoration: underline; }
+
+    /* ── Q&A & Context list items ─────────────────────────────── */
+    .list-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .list-item-body { flex: 1; min-width: 0; }
+    .list-item-main  { font-size: .9rem; margin-bottom: 4px; word-break: break-word; }
+    .list-item-sub   { font-size: .82rem; color: var(--cyan); word-break: break-word; }
+    .list-item-meta  { font-size: .72rem; color: var(--muted); margin-top: 4px; }
+
+    /* ── Resume dropzone ─────────────────────────────────────── */
+    .dropzone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 40px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .15s, background .15s;
+    }
+    .dropzone:hover, .dropzone.drag { border-color: var(--accent); background: #12163a; }
+    .dropzone p { color: var(--muted); font-size: .9rem; margin-top: 8px; }
+    .dropzone .dz-icon { font-size: 2.5rem; }
+    .resume-current {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+    .resume-current .file-icon { font-size: 2rem; }
+    .resume-current .file-info { flex: 1; }
+    .resume-current .file-info strong { display: block; font-size: .9rem; }
+    .resume-current .file-info span   { font-size: .78rem; color: var(--muted); }
+
+    /* ── Empty state ─────────────────────────────────────────── */
+    .empty { text-align: center; padding: 40px; color: var(--muted); font-size: .9rem; }
+
+    /* ── Divider ─────────────────────────────────────────────── */
+    hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+
+    /* ── Toast ───────────────────────────────────────────────── */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--surface3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 20px;
+      font-size: .88rem;
+      color: var(--text);
+      z-index: 9999;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity .2s, transform .2s;
+      pointer-events: none;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    #toast.ok  { border-left: 3px solid var(--green); }
+    #toast.err { border-left: 3px solid var(--red); }
+  </style>
+</head>
+<body>
+
+<!-- ── Sidebar ─────────────────────────────────────────────────────────────── -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <h1>Naukri<span>Bot</span></h1>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">
+      <div class="nav-label">Overview</div>
+      <div class="nav-item active" onclick="goto('overview')">
+        <span class="icon">📊</span> Dashboard
+      </div>
+      <div class="nav-item" onclick="goto('pending')">
+        <span class="icon">⏳</span> Pending Q's
+        <span class="nav-badge" id="sb-pending" style="display:none">0</span>
+      </div>
+      <div class="nav-item" onclick="goto('history')">
+        <span class="icon">📋</span> History
+      </div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-label">Configuration</div>
+      <div class="nav-item" onclick="goto('profile')">
+        <span class="icon">👤</span> Profile
+      </div>
+      <div class="nav-item" onclick="goto('resume')">
+        <span class="icon">📄</span> Resume
+      </div>
+      <div class="nav-item" onclick="goto('context')">
+        <span class="icon">🧠</span> My Context
+      </div>
+      <div class="nav-item" onclick="goto('qa')">
+        <span class="icon">💬</span> Q&amp;A Base
+      </div>
+    </div>
+  </nav>
+  <div class="sidebar-footer">
+    <span class="live-dot"></span>
+    <span id="last-sync">Connecting…</span>
+  </div>
+</aside>
+
+<!-- ── Main ───────────────────────────────────────────────────────────────── -->
+<div class="main">
+  <div class="topbar">
+    <span class="topbar-title" id="topbar-title">Dashboard</span>
+    <span class="topbar-meta" id="topbar-meta"></span>
+  </div>
+
+  <!-- ── Overview ───────────────────────────────────────────── -->
+  <div class="page active" id="page-overview">
+    <div class="stat-row">
+      <div class="stat-card c-green">
+        <div class="slabel">Applied</div>
+        <div class="sval" id="s-applied">—</div>
+      </div>
+      <div class="stat-card c-yellow">
+        <div class="slabel">Skipped / Failed</div>
+        <div class="sval" id="s-skipped">—</div>
+      </div>
+      <div class="stat-card c-accent">
+        <div class="slabel">Saved Q&amp;As</div>
+        <div class="sval" id="s-qa">—</div>
+      </div>
+      <div class="stat-card c-red">
+        <div class="slabel">Pending Questions</div>
+        <div class="sval" id="s-pending">—</div>
+      </div>
+    </div>
+
+    <div id="ov-pending-alert" class="alert alert-warn">
+      ⚠️ Bot is waiting — go to <strong>Pending Q's</strong> and answer the question(s) to let it continue.
+    </div>
+
+    <div class="section-h">Recent Applications</div>
+    <div class="card" style="padding:0">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Status</th><th>Title</th><th>Company</th><th>Time</th><th>Link</th></tr></thead>
+          <tbody id="ov-jobs"><tr><td colspan="5" class="empty">No jobs logged yet.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Pending Questions ──────────────────────────────────── -->
+  <div class="page" id="page-pending">
+    <div id="pending-alert" class="alert alert-warn" style="margin-bottom:20px">
+      ⚠️ Bot is paused — answer the question(s) below to resume it.
+    </div>
+    <div id="pending-list"><div class="empty">No pending questions right now. The bot is running autonomously.</div></div>
+  </div>
+
+  <!-- ── History ────────────────────────────────────────────── -->
+  <div class="page" id="page-history">
+    <div class="section-h" style="margin-bottom:16px">All Applications</div>
+    <div class="card" style="padding:0">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Status</th><th>Title</th><th>Company</th><th>Time</th><th>Link</th></tr></thead>
+          <tbody id="hist-jobs"><tr><td colspan="5" class="empty">No history yet.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Profile ────────────────────────────────────────────── -->
+  <div class="page" id="page-profile">
+    <div class="card">
+      <div class="card-title">Naukri Login</div>
+      <div class="form-row">
+        <div class="field-group">
+          <label>Email</label>
+          <input type="email" id="p-email" placeholder="your@email.com">
+        </div>
+        <div class="field-group">
+          <label>Password</label>
+          <input type="password" id="p-password" placeholder="••••••••" autocomplete="new-password">
+        </div>
+      </div>
+      <div class="alert alert-info" id="pwd-info" style="display:block;margin-bottom:12px">
+        🔒 Password is stored in your MongoDB — never sent to any third party.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Personal Details</div>
+      <div class="form-row">
+        <div class="field-group">
+          <label>First Name</label>
+          <input type="text" id="p-firstname" placeholder="Kamal">
+        </div>
+        <div class="field-group">
+          <label>Last Name</label>
+          <input type="text" id="p-lastname" placeholder="Bisht">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Job Preferences</div>
+      <div class="field-group">
+        <label>Keywords (comma-separated)</label>
+        <input type="text" id="p-keywords" placeholder="python developer, backend engineer, data engineer">
+      </div>
+      <div class="form-row-3">
+        <div class="field-group">
+          <label>Location (blank = anywhere)</label>
+          <input type="text" id="p-location" placeholder="Bangalore">
+        </div>
+        <div class="field-group">
+          <label>Max Applications / run</label>
+          <input type="number" id="p-max" min="1" max="200" placeholder="50">
+        </div>
+        <div class="field-group">
+          <label>Pages per Keyword</label>
+          <input type="number" id="p-pages" min="1" max="10" placeholder="2">
+        </div>
+      </div>
+    </div>
+
+    <button class="btn btn-primary" onclick="saveProfile()">💾 Save Profile</button>
+  </div>
+
+  <!-- ── Resume ─────────────────────────────────────────────── -->
+  <div class="page" id="page-resume">
+    <div id="resume-current-wrap" style="display:none">
+      <div class="section-h">Current Resume</div>
+      <div class="resume-current">
+        <span class="file-icon">📄</span>
+        <div class="file-info">
+          <strong id="resume-name">—</strong>
+          <span id="resume-date">Uploaded —</span>
+        </div>
+        <a id="resume-link" href="#" target="_blank" class="btn btn-ghost btn-sm">View ↗</a>
+      </div>
+    </div>
+
+    <div class="section-h">Upload New Resume</div>
+    <div id="aws-warn" class="alert alert-warn" style="display:none">
+      ⚠️ AWS S3 not configured. Add <code>AWS_S3_BUCKET</code>, <code>AWS_ACCESS_KEY_ID</code>,
+      and <code>AWS_SECRET_ACCESS_KEY</code> to your <code>.env</code> file.
+    </div>
+    <div class="card">
+      <div class="dropzone" id="dropzone"
+           onclick="document.getElementById('resume-file').click()"
+           ondragover="dzOver(event)" ondragleave="dzLeave(event)" ondrop="dzDrop(event)">
+        <div class="dz-icon">☁️</div>
+        <p>Drop your resume here, or <strong>click to browse</strong></p>
+        <p style="font-size:.78rem;margin-top:4px">PDF, DOC, DOCX — max 10 MB</p>
+      </div>
+      <input type="file" id="resume-file" accept=".pdf,.doc,.docx" style="display:none"
+             onchange="uploadResume(this.files[0])">
+      <div id="upload-progress" style="display:none;margin-top:14px">
+        <div style="background:var(--surface2);border-radius:4px;height:6px">
+          <div id="upload-bar" style="background:var(--accent);height:6px;border-radius:4px;width:0;transition:width .3s"></div>
+        </div>
+        <p style="font-size:.8rem;color:var(--muted);margin-top:6px" id="upload-status">Uploading…</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Context ────────────────────────────────────────────── -->
+  <div class="page" id="page-context">
+    <div class="alert alert-info" style="display:block;margin-bottom:20px">
+      💡 Add facts about yourself here. The bot uses these when auto-answering questions.
+      Example: <em>"years_of_experience" → "4 years in Python backend"</em>
+    </div>
+    <div class="card">
+      <div class="card-title">Add Context Entry</div>
+      <div class="form-row">
+        <div class="field-group">
+          <label>Key (short label)</label>
+          <input type="text" id="ctx-key" placeholder="e.g. years_of_experience, current_role, skills">
+        </div>
+        <div class="field-group">
+          <label>Value</label>
+          <input type="text" id="ctx-val" placeholder="4 years in Python backend, Django, FastAPI">
+        </div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="addContext()">Add Entry</button>
+    </div>
+
+    <div class="section-h">Saved Context</div>
+    <div id="ctx-list"><div class="empty">No context entries yet.</div></div>
+  </div>
+
+  <!-- ── Q&A Knowledge Base ─────────────────────────────────── -->
+  <div class="page" id="page-qa">
+    <div class="alert alert-info" style="display:block;margin-bottom:20px">
+      💡 These answers are auto-filled when the bot sees a matching question (with fuzzy matching).
+      Answers you submit from <strong>Pending Q's</strong> are added here automatically.
+    </div>
+    <div class="card">
+      <div class="card-title">Add / Update Answer</div>
+      <div class="form-row">
+        <div class="field-group">
+          <label>Question</label>
+          <input type="text" id="qa-q" placeholder="How many years of Python experience?">
+        </div>
+        <div class="field-group">
+          <label>Answer</label>
+          <input type="text" id="qa-a" placeholder="4">
+        </div>
+      </div>
+      <div class="field-group" style="max-width:200px;margin-bottom:14px">
+        <label>Field type</label>
+        <select id="qa-type">
+          <option value="text">Text</option>
+          <option value="radio">Radio</option>
+        </select>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="addQA()">Save Answer</button>
+    </div>
+
+    <div class="section-h">Saved Answers</div>
+    <div id="qa-list"><div class="empty">No saved answers yet.</div></div>
+  </div>
+</div>
+
+<!-- ── Toast ─────────────────────────────────────────────────────────────── -->
+<div id="toast"></div>
+
+<script>
+// ── Router ──────────────────────────────────────────────────────────────────
+const PAGE_TITLES = {
+  overview: 'Dashboard',
+  pending:  'Pending Questions',
+  history:  'History',
+  profile:  'Profile & Settings',
+  resume:   'Resume',
+  context:  'My Context',
+  qa:       'Q&A Knowledge Base',
+};
+let currentPage = 'overview';
+
+function goto(name) {
+  currentPage = name;
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n => {
+    if (n.textContent.trim().toLowerCase().includes(PAGE_TITLES[name].split(' ')[0].toLowerCase()))
+      n.classList.add('active');
+  });
+  document.getElementById('topbar-title').textContent = PAGE_TITLES[name];
+  if (name === 'profile') loadProfile();
+  if (name === 'resume')  loadResume();
+  if (name === 'context') loadContext();
+  if (name === 'qa')      loadQA();
+  if (name === 'history') loadHistory();
+}
+
+// ── Toast ───────────────────────────────────────────────────────────────────
+let toastTimer;
+function toast(msg, type='ok') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'show ' + type;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.className = '', 3000);
+}
+
+// ── Utils ───────────────────────────────────────────────────────────────────
+function esc(s='') { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function escAttr(s='') { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+function fmtTime(iso) {
+  if (!iso) return '—';
+  try { return new Date(iso.endsWith('Z')?iso:iso+'Z').toLocaleString('en-IN',{dateStyle:'short',timeStyle:'short'}); }
+  catch { return iso; }
+}
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const r = await fetch(path, opts);
+  return r.json();
+}
+function jobRow(j) {
+  return `<tr>
+    <td><span class="badge badge-${j.status}">${j.status}</span></td>
+    <td>${esc(j.title||'—')}</td>
+    <td>${esc(j.company||'—')}</td>
+    <td>${fmtTime(j.timestamp)}</td>
+    <td>${j.url?`<a class="tlink" href="${esc(j.url)}" target="_blank">Open ↗</a>`:'—'}</td>
+  </tr>`;
+}
+
+// ── Live stats refresh ──────────────────────────────────────────────────────
+let pendingStates = {};
+
+async function refresh() {
+  try {
+    const d = await api('GET', '/api/stats');
+
+    document.getElementById('s-applied').textContent  = d.applied;
+    document.getElementById('s-skipped').textContent  = d.skipped + d.failed;
+    document.getElementById('s-qa').textContent       = d.qa_count;
+    document.getElementById('s-pending').textContent  = (d.pending_questions||[]).length;
+
+    const pendingCount = (d.pending_questions||[]).length;
+    const badge = document.getElementById('sb-pending');
+    badge.textContent = pendingCount;
+    badge.style.display = pendingCount ? '' : 'none';
+
+    const ovAlert = document.getElementById('ov-pending-alert');
+    ovAlert.classList.toggle('show', pendingCount > 0);
+    const pAlert  = document.getElementById('pending-alert');
+    pAlert.classList.toggle('show', pendingCount > 0);
+
+    // Overview recent jobs (last 10)
+    const recentJobs = (d.recent_jobs||[]).slice(0,10);
+    document.getElementById('ov-jobs').innerHTML =
+      recentJobs.length ? recentJobs.map(jobRow).join('') :
+      '<tr><td colspan="5" class="empty">No jobs logged yet.</td></tr>';
+
+    // Pending page
+    renderPending(d.pending_questions||[]);
+
+    document.getElementById('last-sync').textContent =
+      'Live · ' + new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  } catch(e) {
+    document.getElementById('last-sync').textContent = 'Server offline';
+  }
+}
+
+function renderPending(questions) {
+  const el = document.getElementById('pending-list');
+  if (!questions.length) {
+    el.innerHTML = '<div class="empty">No pending questions right now. The bot is running autonomously.</div>';
+    return;
+  }
+  el.innerHTML = questions.map(q => {
+    const s = pendingStates[q.id] || {};
+    const isRadio = q.field_type === 'radio' && q.options && q.options.length;
+    const opts = isRadio ? `<div class="qcard-options">${q.options.map(o =>
+      `<button class="opt-btn${s.sel===o?' sel':''}"
+        onclick="pickOpt('${q.id}','${escAttr(o)}',this)">${esc(o)}</button>`
+    ).join('')}</div>` : '';
+    return `<div class="qcard" id="qc-${q.id}">
+      <div class="qcard-q">${esc(q.question)}</div>
+      <div class="qcard-meta">
+        Type: <strong>${q.field_type}</strong>
+        ${q.job_url ? `· <a class="tlink" href="${esc(q.job_url)}" target="_blank">Job link ↗</a>` : ''}
+        · ${fmtTime(q.created_at)}
+      </div>
+      ${opts}
+      <div class="qcard-row">
+        <input type="text" id="qi-${q.id}"
+          value="${esc(s.val||'')}"
+          placeholder="${isRadio ? 'or type custom answer…' : 'Type your answer…'}"
+          oninput="pendingStates['${q.id}']={...(pendingStates['${q.id}']||{}),val:this.value}"
+          onkeydown="if(event.key==='Enter')submitPending('${q.id}')">
+        <button class="btn btn-primary btn-sm" onclick="submitPending('${q.id}')">Submit →</button>
+      </div>
+      <label class="save-kb">
+        <input type="checkbox" id="qsave-${q.id}" checked> Save to Q&amp;A knowledge base
+      </label>
+    </div>`;
+  }).join('');
+}
+
+function pickOpt(id, val, btn) {
+  pendingStates[id] = {...(pendingStates[id]||{}), sel: val, val};
+  const input = document.getElementById('qi-' + id);
+  if (input) input.value = val;
+  btn.closest('.qcard-options').querySelectorAll('.opt-btn').forEach(b => b.classList.remove('sel'));
+  btn.classList.add('sel');
+}
+
+async function submitPending(id) {
+  const input = document.getElementById('qi-' + id);
+  const answer = (input?.value || '').trim();
+  if (!answer) { input?.focus(); return; }
+  const saveChk = document.getElementById('qsave-' + id);
+  try {
+    await api('POST', `/api/unknown-question/${id}/answer`, {
+      answer, save_to_kb: saveChk?.checked ?? true
+    });
+    const card = document.getElementById('qc-' + id);
+    const qText = card.querySelector('.qcard-q').textContent;
+    card.innerHTML = `<div class="qcard-q">${esc(qText)}</div>
+      <div style="margin-top:10px"><span class="answered-pill">✓ Answered: ${esc(answer)}</span></div>`;
+    delete pendingStates[id];
+    toast('Answer submitted!', 'ok');
+  } catch(e) { toast('Could not submit: ' + e, 'err'); }
+}
+
+// ── History ─────────────────────────────────────────────────────────────────
+async function loadHistory() {
+  const d = await api('GET', '/api/stats');
+  const jobs = d.recent_jobs || [];
+  document.getElementById('hist-jobs').innerHTML = jobs.length
+    ? jobs.map(jobRow).join('')
+    : '<tr><td colspan="5" class="empty">No history yet.</td></tr>';
+}
+
+// ── Profile ─────────────────────────────────────────────────────────────────
+async function loadProfile() {
+  const p = await api('GET', '/api/profile');
+  document.getElementById('p-email').value     = p.email || '';
+  document.getElementById('p-firstname').value = p.firstname || '';
+  document.getElementById('p-lastname').value  = p.lastname || '';
+  document.getElementById('p-keywords').value  = (p.keywords||[]).join(', ');
+  document.getElementById('p-location').value  = p.location || '';
+  document.getElementById('p-max').value       = p.max_applications || 50;
+  document.getElementById('p-pages').value     = p.pages_per_keyword || 2;
+}
+
+async function saveProfile() {
+  const email    = document.getElementById('p-email').value.trim();
+  const password = document.getElementById('p-password').value;
+  const keywords = document.getElementById('p-keywords').value
+    .split(',').map(k=>k.trim()).filter(Boolean);
+  const body = {
+    email,
+    firstname:        document.getElementById('p-firstname').value.trim(),
+    lastname:         document.getElementById('p-lastname').value.trim(),
+    keywords,
+    location:         document.getElementById('p-location').value.trim(),
+    max_applications: parseInt(document.getElementById('p-max').value)||50,
+    pages_per_keyword:parseInt(document.getElementById('p-pages').value)||2,
+  };
+  try {
+    await api('POST', '/api/profile', body);
+    if (password) {
+      await api('POST', '/api/profile/password', {password});
+      document.getElementById('p-password').value = '';
+    }
+    toast('Profile saved!', 'ok');
+  } catch(e) { toast('Save failed: ' + e, 'err'); }
+}
+
+// ── Resume ──────────────────────────────────────────────────────────────────
+async function loadResume() {
+  const r = await api('GET', '/api/resume');
+  const wrap = document.getElementById('resume-current-wrap');
+  if (r.resume_filename) {
+    wrap.style.display = '';
+    document.getElementById('resume-name').textContent = r.resume_filename;
+    document.getElementById('resume-date').textContent = 'Uploaded ' + fmtTime(r.resume_updated_at);
+    const link = document.getElementById('resume-link');
+    link.href = r.resume_url || '#';
+  } else {
+    wrap.style.display = 'none';
+  }
+  // Check AWS config
+  const awsWarn = document.getElementById('aws-warn');
+  if (!r.resume_url) {
+    // check via a probe — if upload endpoint gives 400 about bucket we show warning
+    awsWarn.style.display = 'none'; // hide by default; shown on upload failure
+  }
+}
+
+function dzOver(e)  { e.preventDefault(); document.getElementById('dropzone').classList.add('drag'); }
+function dzLeave(e) { document.getElementById('dropzone').classList.remove('drag'); }
+function dzDrop(e)  { e.preventDefault(); dzLeave(e); const f=e.dataTransfer.files[0]; if(f)uploadResume(f); }
+
+async function uploadResume(file) {
+  if (!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['pdf','doc','docx'].includes(ext)) { toast('Only PDF/DOC/DOCX allowed', 'err'); return; }
+
+  const bar   = document.getElementById('upload-bar');
+  const prog  = document.getElementById('upload-progress');
+  const stat  = document.getElementById('upload-status');
+  prog.style.display = ''; bar.style.width = '20%'; stat.textContent = 'Uploading…';
+
+  const fd = new FormData();
+  fd.append('resume', file);
+  try {
+    const r = await fetch('/api/resume/upload', {method:'POST', body: fd});
+    const d = await r.json();
+    if (d.ok) {
+      bar.style.width = '100%';
+      stat.textContent = 'Uploaded: ' + d.filename;
+      toast('Resume uploaded to S3!', 'ok');
+      setTimeout(loadResume, 500);
+    } else {
+      bar.style.width = '0';
+      stat.textContent = 'Error: ' + d.error;
+      document.getElementById('aws-warn').style.display =
+        (d.error||'').includes('AWS_S3_BUCKET') ? 'block' : 'none';
+      toast('Upload failed: ' + d.error, 'err');
+    }
+  } catch(e) {
+    bar.style.width = '0';
+    stat.textContent = 'Network error';
+    toast('Upload error: ' + e, 'err');
+  }
+}
+
+// ── Context ─────────────────────────────────────────────────────────────────
+async function loadContext() {
+  const items = await api('GET', '/api/context');
+  const el = document.getElementById('ctx-list');
+  if (!items.length) { el.innerHTML = '<div class="empty">No context entries yet.</div>'; return; }
+  el.innerHTML = items.map(c => `<div class="list-item">
+    <div class="list-item-body">
+      <div class="list-item-main">${esc(c.key)}</div>
+      <div class="list-item-sub">${esc(c.value)}</div>
+      <div class="list-item-meta">${fmtTime(c.updated_at)}</div>
+    </div>
+    <button class="btn btn-danger btn-sm" onclick="delCtx(this,'${escAttr(c.key)}')">Delete</button>
+  </div>`).join('');
+}
+
+async function addContext() {
+  const key = document.getElementById('ctx-key').value.trim();
+  const val = document.getElementById('ctx-val').value.trim();
+  if (!key || !val) { toast('Key and value are required', 'err'); return; }
+  await api('POST', '/api/context', {key, value: val});
+  document.getElementById('ctx-key').value = '';
+  document.getElementById('ctx-val').value = '';
+  toast('Context saved!', 'ok');
+  loadContext();
+}
+
+async function delCtx(btn, key) {
+  await api('DELETE', '/api/context/' + encodeURIComponent(key));
+  btn.closest('.list-item').remove();
+  toast('Deleted', 'ok');
+}
+
+// ── Q&A ─────────────────────────────────────────────────────────────────────
+async function loadQA() {
+  const pairs = await api('GET', '/api/qa-pairs');
+  const el = document.getElementById('qa-list');
+  if (!pairs.length) { el.innerHTML = '<div class="empty">No saved answers yet.</div>'; return; }
+  el.innerHTML = pairs.map(p => `<div class="list-item">
+    <div class="list-item-body">
+      <div class="list-item-main">${esc(p.question)}</div>
+      <div class="list-item-sub">${esc(p.answer)}</div>
+      <div class="list-item-meta">${p.field_type} · ${fmtTime(p.updated_at)}</div>
+    </div>
+    <button class="btn btn-danger btn-sm" onclick="delQA(this,'${escAttr(p.question)}')">Delete</button>
+  </div>`).join('');
+}
+
+async function addQA() {
+  const q = document.getElementById('qa-q').value.trim();
+  const a = document.getElementById('qa-a').value.trim();
+  const t = document.getElementById('qa-type').value;
+  if (!q || !a) { toast('Question and answer are required', 'err'); return; }
+  await api('POST', '/api/qa-pairs', {question:q, answer:a, field_type:t});
+  document.getElementById('qa-q').value = '';
+  document.getElementById('qa-a').value = '';
+  toast('Answer saved!', 'ok');
+  loadQA();
+}
+
+async function delQA(btn, question) {
+  await api('DELETE', '/api/qa-pairs/' + encodeURIComponent(question));
+  btn.closest('.list-item').remove();
+  toast('Deleted', 'ok');
+}
+
+// ── Bootstrap ────────────────────────────────────────────────────────────────
+refresh();
+setInterval(refresh, 4000);
+</script>
+</body>
+</html>

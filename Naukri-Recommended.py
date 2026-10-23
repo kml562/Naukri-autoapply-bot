@@ -25,6 +25,7 @@ import csv
 import difflib
 import logging
 import re
+import requests
 from datetime import datetime
 from dotenv import load_dotenv
 from selenium import webdriver
@@ -50,6 +51,7 @@ NAUKRI_EMAIL = os.getenv('NAUKRI_EMAIL', '')
 NAUKRI_PASSWORD = os.getenv('NAUKRI_PASSWORD', '')
 MAX_SELECT = 5
 ANSWERS_CSV = "application_answers.csv"
+DASHBOARD_URL = os.getenv('DASHBOARD_URL', 'http://localhost:8080')
 
 TABS = [
     {"num": 1, "id": "apply",        "label": "Applies"},
@@ -71,90 +73,139 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# Answer Knowledge Base (CSV) — fixed header handling
+# Answer Knowledge Base — MongoDB via dashboard API
+# Falls back to CSV if server is unreachable.
 # ============================================================
+
+def _api(method, path, **kwargs):
+    """Call the dashboard API. Returns parsed JSON or None on error."""
+    try:
+        r = requests.request(method, DASHBOARD_URL + path, timeout=5, **kwargs)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None
+
 
 def load_answers():
     """
-    Load question→answer mappings from CSV.
+    Load question→answer mappings from MongoDB via API.
+    Falls back to CSV so the bot still works when server is down.
     Returns a dict: {question_text: answer}
-    Handles the case where header row might be corrupted.
     """
-    answers = {}
-    if not os.path.exists(ANSWERS_CSV):
-        logger.info(f"No existing {ANSWERS_CSV}, starting fresh.")
+    # Try MongoDB API first
+    data = _api("GET", "/api/qa-pairs")
+    if data is not None:
+        answers = {row["question"]: row["answer"] for row in data if row.get("question") and row.get("answer")}
+        logger.info(f"Loaded {len(answers)} known answers from MongoDB")
         return answers
 
+    # CSV fallback
+    answers = {}
+    if not os.path.exists(ANSWERS_CSV):
+        return answers
     try:
         with open(ANSWERS_CSV, 'r', encoding='utf-8') as f:
             content = f.read().strip()
             if not content:
                 return answers
-
             lines = content.split('\n')
-            # Find the actual header line
-            header_idx = -1
-            for i, line in enumerate(lines):
-                if line.startswith('question_text,'):
-                    header_idx = i
-                    break
-
-            if header_idx == -1:
-                logger.warning("No header found in CSV, recreating.")
-                return answers
-
-            # Re-read properly with DictReader
             reader = csv.DictReader(lines)
             for row in reader:
                 q = (row.get('question_text') or '').strip()
                 a = (row.get('answer') or '').strip()
                 if q and a:
                     answers[q] = a
-
-        logger.info(f"Loaded {len(answers)} known answers from {ANSWERS_CSV}")
+        logger.info(f"Loaded {len(answers)} known answers from CSV (fallback)")
     except Exception as e:
-        logger.warning(f"Could not load {ANSWERS_CSV}: {e}")
-
+        logger.warning(f"Could not load CSV: {e}")
     return answers
 
 
 def fuzzy_lookup(question_text, known_answers, threshold=0.72):
-    """Return the stored answer for question_text, using fuzzy matching as fallback."""
+    """
+    Look up answer via MongoDB API first (supports fuzzy match server-side).
+    Falls back to local dict lookup.
+    """
+    result = _api("POST", "/api/answer-lookup", json={"question": question_text})
+    if result and result.get("found"):
+        sim = result.get("similarity", 1.0)
+        logger.info(f"   ~ DB match (sim={sim:.2f}): using stored answer")
+        return result.get("answer")
+
+    # Local dict fallback
     if question_text in known_answers:
         return known_answers[question_text]
     matches = difflib.get_close_matches(
         question_text, known_answers.keys(), n=1, cutoff=threshold
     )
     if matches:
-        logger.info(f"   ~ Fuzzy match: '{matches[0]}' → using stored answer")
+        logger.info(f"   ~ Local fuzzy match: '{matches[0]}' → using stored answer")
         return known_answers[matches[0]]
     return None
 
 
 def save_answer(question_text, answer, field_type="text"):
     """
-    Append a new question→answer pair to the CSV.
-    Creates header if file doesn't exist or is empty.
+    Save question→answer to MongoDB via API.
+    Also appends to CSV as a local backup.
     """
-    needs_header = False
-    if not os.path.exists(ANSWERS_CSV):
-        needs_header = True
-    else:
-        with open(ANSWERS_CSV, 'r', encoding='utf-8') as f:
-            content = f.read().strip()
-            if not content:
-                needs_header = True
+    # MongoDB via API
+    _api("POST", "/api/qa-pairs", json={
+        "question": question_text,
+        "answer": answer,
+        "field_type": field_type,
+    })
 
+    # CSV backup
+    needs_header = not os.path.exists(ANSWERS_CSV)
     try:
-        mode = 'a' if os.path.exists(ANSWERS_CSV) else 'w'
         with open(ANSWERS_CSV, 'a', encoding='utf-8', newline='') as f:
             writer = csv.writer(f)
             if needs_header:
                 writer.writerow(['question_text', 'answer', 'field_type', 'created_at'])
             writer.writerow([question_text, answer, field_type, datetime.now().isoformat()])
-        logger.info(f"💾 Saved: '{question_text}' → '{answer}'")
+        logger.info(f"Saved: '{question_text}' → '{answer}'")
     except Exception as e:
-        logger.error(f"Could not save to {ANSWERS_CSV}: {e}")
+        logger.error(f"Could not save to CSV: {e}")
+
+
+def log_job(url, title="", company="", status="applied"):
+    """Log a job application result to the dashboard."""
+    _api("POST", "/api/job", json={"url": url, "title": title, "company": company, "status": status})
+
+
+def ask_via_dashboard(question_text, field_type="text", options=None, job_url="", timeout=300):
+    """
+    Post an unknown question to the dashboard and block until the user answers.
+    Returns the answer string, or None if it times out.
+    """
+    data = _api("POST", "/api/unknown-question", json={
+        "question": question_text,
+        "field_type": field_type,
+        "options": options or [],
+        "job_url": job_url,
+    })
+    if not data:
+        return None
+
+    q_id = data.get("id")
+    logger.info(f"   Dashboard question posted (id={q_id[:8]}…). Waiting for your answer at http://localhost:5000 ...")
+
+    waited = 0
+    while waited < timeout:
+        time.sleep(3)
+        waited += 3
+        result = _api("GET", f"/api/unknown-question/{q_id}")
+        if result and result.get("answered"):
+            ans = result.get("answer")
+            logger.info(f"   Dashboard answer received: '{ans}'")
+            return ans
+        if waited % 30 == 0:
+            logger.info(f"   Still waiting for dashboard answer… ({waited}s)")
+
+    logger.warning("   Timed out waiting for dashboard answer.")
+    return None
 
 
 # ============================================================
@@ -478,58 +529,58 @@ def handle_radio_buttons(driver, known_answers):
                 continue
         # If known answer didn't match any option, fall through to unknown flow
 
-    # UNKNOWN → log and wait for user to click in browser
+    # UNKNOWN → ask via dashboard (also log options for the UI)
     logger.info(f"   ❓ Unknown radio. Options: {options}")
-    logger.info("   👆 Click your answer in the browser...")
+    logger.info("   Dashboard: open http://localhost:5000 and answer the question there.")
 
-    # Wait for user to click one — re-fetch elements every iteration to avoid stale references
+    job_url = driver.current_url
+    answer = ask_via_dashboard(question_text, field_type="radio", options=options, job_url=job_url)
+
+    if answer:
+        # Try to click the matching radio/label in the browser
+        try:
+            container = driver.find_element(By.CSS_SELECTOR, ".singleselect-radiobutton-container")
+            radios = container.find_elements(By.CSS_SELECTOR, ".ssrc__radio")
+            lbls = container.find_elements(By.CSS_SELECTOR, ".ssrc__label")
+            for rb, lbl in zip(radios, lbls):
+                if lbl.text.strip().lower() == answer.lower() or rb.get_attribute('value') == answer:
+                    driver.execute_script("arguments[0].click();", rb)
+                    logger.info(f"   ✓ Auto-filled from dashboard: '{answer}'")
+                    save_answer(question_text, answer, "radio")
+                    time.sleep(1)
+                    _click_save_after_radio(driver)
+                    return True
+        except Exception:
+            pass
+        save_answer(question_text, answer, "radio")
+        return True
+
+    # Fall back: wait for manual browser click
+    logger.info("   No dashboard answer received; waiting for browser click...")
     waited = 0
-    while waited < 30:  # up to 60 seconds
+    while waited < 30:
         time.sleep(2)
         waited += 2
-
-        # Check if container still exists
         try:
             current_container = driver.find_element(By.CSS_SELECTOR, ".singleselect-radiobutton-container")
-        except NoSuchElementException:
-            return False
-
-        # Re-fetch radios & labels fresh every poll cycle to avoid stale references
-        try:
             radios = current_container.find_elements(By.CSS_SELECTOR, ".ssrc__radio")
             lbls = current_container.find_elements(By.CSS_SELECTOR, ".ssrc__label")
-        except Exception:
-            radios, lbls = [], []
-
-        if not radios:
-            if waited % 10 == 0:
-                logger.info(f"   Waiting for radio options to load... ({waited}s)")
-            continue
-
-        for rb, lbl in zip(radios, lbls):
+            for rb, lbl in zip(radios, lbls):
+                try:
+                    if rb.is_selected():
+                        chosen = lbl.text.strip()
+                        logger.info(f"   ✓ Browser selection: '{chosen}'")
+                        save_answer(question_text, chosen, "radio")
+                        return True
+                except StaleElementReferenceException:
+                    continue
             try:
-                if rb.is_selected():
-                    chosen = lbl.text.strip()
-                    logger.info(f"   ✓ User selected: '{chosen}'")
-                    save_answer(question_text, chosen, "radio")
-                    time.sleep(1)
+                if not current_container.is_displayed():
                     return True
-            except StaleElementReferenceException:
-                # Element went stale — will retry on next iteration
-                continue
             except Exception:
-                continue
-
-        # Check if container is no longer displayed (next question loaded)
-        try:
-            if not current_container.is_displayed():
-                # The radio question was answered (by user) and replaced with next question
                 return True
-        except Exception:
-            return True
-
-        if waited % 10 == 0:
-            logger.info(f"   Still waiting for you to click an option... ({waited}s)")
+        except NoSuchElementException:
+            return False
 
     logger.warning("   Timed out waiting for radio selection.")
     return False
@@ -585,37 +636,61 @@ def handle_contenteditable(driver, known_answers):
             pass
         return True
 
-    # UNKNOWN → log and wait for user to type & submit in browser
+    # UNKNOWN → ask via dashboard; simultaneously watch for browser answer
     current_user_msg_count = get_user_message_count(driver)
     logger.info(f"   ❓ Unknown text question.")
-    logger.info("   ✏️ Type your answer in the browser and click Send/Save...")
+    logger.info("   Dashboard: open http://localhost:5000 to answer, or type in the browser.")
 
+    job_url = driver.current_url
+    answer = ask_via_dashboard(question_text, field_type="text", job_url=job_url)
+
+    if answer:
+        # Auto-fill the chatbot text area
+        try:
+            fresh_ta = find_chat_text_area(driver)
+            if fresh_ta:
+                driver.execute_script("""
+                    arguments[0].focus();
+                    arguments[0].innerText = arguments[1];
+                    arguments[0].dispatchEvent(new Event('input', {bubbles:true}));
+                    arguments[0].dispatchEvent(new Event('change', {bubbles:true}));
+                """, fresh_ta, answer)
+                time.sleep(0.5)
+                try:
+                    fresh_ta.send_keys(Keys.RETURN)
+                except Exception:
+                    pass
+                time.sleep(0.5)
+                save_btn = find_save_button(driver)
+                if save_btn:
+                    click_save_button(driver, save_btn)
+                    time.sleep(3)
+        except Exception as e:
+            logger.warning(f"   Could not auto-fill dashboard answer: {e}")
+        save_answer(question_text, answer, "text")
+        return True
+
+    # Fall back: wait for browser submission
     waited = 0
     while waited < 60:
         time.sleep(2)
         waited += 2
-
         try:
-            # Did user submit an answer? (user message count increased)
             new_count = get_user_message_count(driver)
             if new_count > current_user_msg_count:
                 answer = get_latest_user_answer(driver)
                 if answer:
-                    logger.info(f"   ✓ User answered: '{answer}'")
+                    logger.info(f"   ✓ Browser answer: '{answer}'")
                     save_answer(question_text, answer, "text")
-                    time.sleep(2)
                     return True
-
             if not is_drawer_open(driver):
                 return True
         except StaleElementReferenceException:
-            # DOM re-rendered — retry next iteration
             continue
         except Exception:
             continue
-
         if waited % 10 == 0:
-            logger.info(f"   Still waiting for you to type & send... ({waited}s)")
+            logger.info(f"   Waiting for browser answer... ({waited}s)")
 
     logger.warning("   Timed out waiting for text answer.")
     return False
@@ -729,14 +804,33 @@ def navigate_to_tab(driver, tab_id):
 # Main
 # ============================================================
 
+def load_credentials_from_dashboard():
+    """
+    Try to load Naukri credentials + job prefs from the dashboard (MongoDB).
+    Falls back to .env values if the server is unreachable or profile is empty.
+    Returns (email, password) — also updates module-level config globals.
+    """
+    global NAUKRI_EMAIL, NAUKRI_PASSWORD
+    data = _api("GET", "/api/profile/bot-config")
+    if data and data.get("email") and data.get("password"):
+        NAUKRI_EMAIL    = data["email"]
+        NAUKRI_PASSWORD = data["password"]
+        logger.info("Credentials loaded from dashboard profile.")
+    else:
+        logger.info("Dashboard profile empty or unreachable — using .env credentials.")
+
+
 def main():
     """Main entry point — loops until no recommended jobs remain."""
     logger.info("=" * 50)
     logger.info("Naukri Recommended Jobs Bot")
     logger.info("=" * 50)
 
+    # Load credentials from dashboard profile (falls back to .env)
+    load_credentials_from_dashboard()
+
     if not NAUKRI_EMAIL or not NAUKRI_PASSWORD:
-        logger.error("Set NAUKRI_EMAIL and NAUKRI_PASSWORD in .env")
+        logger.error("No credentials found. Set them in the dashboard Profile page or in .env")
         return
 
     selected_tabs = select_tabs()
@@ -744,6 +838,7 @@ def main():
 
     known_answers = load_answers()
     total_applied = 0
+    total_skipped = 0
 
     driver = None
     try:
@@ -758,9 +853,23 @@ def main():
             while True:
                 navigate_to_tab(driver, tab['id'])
 
-                if not select_jobs_and_apply(driver):
+                applied_ok = select_jobs_and_apply(driver)
+
+                if not applied_ok:
                     logger.info(f"No more jobs in '{tab['label']}'.")
+                    # Log the skip to dashboard
+                    try:
+                        log_job(url=driver.current_url, status="skipped")
+                        total_skipped += 1
+                    except Exception:
+                        pass
                     break
+
+                # Log applied batch to dashboard
+                try:
+                    log_job(url=driver.current_url, status="applied")
+                except Exception:
+                    pass
 
                 handle_chatbot_drawer(driver, known_answers)
                 total_applied += MAX_SELECT
