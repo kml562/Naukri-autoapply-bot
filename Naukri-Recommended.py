@@ -83,9 +83,13 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 def _api(method, path, **kwargs):
-    """Call the dashboard API. Returns parsed JSON or None on error."""
+    """Call the dashboard API with JWT auth. Returns parsed JSON or None on error."""
     try:
-        r = requests.request(method, DASHBOARD_URL + path, timeout=5, **kwargs)
+        token = os.getenv("BOT_AUTH_TOKEN", "")
+        headers = kwargs.pop("headers", {})
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        r = requests.request(method, DASHBOARD_URL + path, timeout=5, headers=headers, **kwargs)
         r.raise_for_status()
         return r.json()
     except Exception:
